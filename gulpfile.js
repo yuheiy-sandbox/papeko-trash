@@ -20,8 +20,12 @@ gulp.task('fetchData', cb => {
   request(MOVIE_DATA_URL, (err, res, body) => {
     if (!err && res.statusCode === 200) {
       MOVIE_DATA = body;
-      cb();
+      return cb();
     }
+
+    throw new $.util.PluginError('request', {
+      message: 'Failed to fetch data from the papeko server.'
+    });
   });
 });
 
@@ -67,7 +71,6 @@ gulp.task('webpack:build', () => {
 
 gulp.task('webpack', () => {
   const taskName = production ? 'webpack:build' : 'webpack:dev';
-
   return runSequence('fetchData', taskName);
 });
 
@@ -80,7 +83,7 @@ gulp.task('styles', () => {
       browsers: ['last 2 versions'],
       cascade: false
     }))
-    .pipe($.minifyCss())
+    .pipe($.cssnano())
     .pipe($.if(development, $.sourcemaps.write('./')))
     .pipe(gulp.dest('dist'))
     .pipe(browserSync.stream({ match: '**/*.css' }));
