@@ -12,66 +12,83 @@ const webpackConfig = require('./webpack.config');
 const production = process.env.NODE_ENV === 'production';
 const development = !production;
 
-let MOVIE_DATA = [];
-
-gulp.task('fetchData', cb => {
-  const MOVIE_DATA_URL = 'http://papeko-server.herokuapp.com/api/';
-
-  request(MOVIE_DATA_URL, (err, res, body) => {
-    if (!err && res.statusCode === 200) {
-      MOVIE_DATA = body;
-      return cb();
-    }
-
-    throw new $.util.PluginError('request', {
-      message: 'Failed to fetch data from the papeko server.'
-    });
-  });
-});
-
+let movieData;
 const devConfig = Object.create(webpackConfig);
 devConfig.debug = true;
 devConfig.devtool = 'eval-source-map';
-devConfig.plugins.push(
-  new webpack.DefinePlugin({
-    MOVIE_DATA: JSON.stringify(MOVIE_DATA),
-    'process.env.NODE_ENV': JSON.stringify('development')
-  })
-);
-const devCompiler = webpack(devConfig);
+let devCompiler;
 
-gulp.task('webpack:dev', () => {
+const fetchData = () => {
+  const MOVIE_DATA_URL = 'http://papeko-server.herokuapp.com/api/';
+
+  return new Promise(done => {
+    request(MOVIE_DATA_URL, (err, res, body) => {
+      if (!err && res.statusCode === 200) {
+        movieData = body;
+
+        if (development) {
+          devConfig.plugins.push(
+            new webpack.DefinePlugin({
+              MOVIE_DATA: JSON.stringify(movieData),
+              'process.env.NODE_ENV': JSON.stringify('development')
+            })
+          );
+          devCompiler = webpack(devConfig);
+        }
+
+        return done();
+      }
+
+      throw new $.util.PluginError('request', {
+        message: 'Failed to fetch data from the papeko server.'
+      });
+    });
+  });
+};
+
+const webpackDev = () => {
   return devCompiler.plugin('done', stats => {
     if (stats.hasErrors() || stats.hasWarnings()) {
       return;
     }
     browserSync.reload();
   });
+};
+
+let isFetch = true;
+
+gulp.task('webpack:dev', () => {
+  if (isFetch) {
+    isFetch = false;
+
+    return fetchData()
+      .then(webpackDev);
+  }
+
+  return webpackDev();
 });
 
 gulp.task('webpack:build', () => {
-  const config = Object.create(webpackConfig);
-  config.plugins.push(
-    new webpack.DefinePlugin({
-      MOVIE_DATA: JSON.stringify(MOVIE_DATA),
-      'process.env.NODE_ENV': JSON.stringify('production')
-    }),
-    new webpack.optimize.DedupePlugin(),
-    new webpack.optimize.OccurenceOrderPlugin(),
-    new webpack.optimize.UglifyJsPlugin({ compress: { warnings: false } })
-  );
+  return fetchData()
+    .then(() => {
+      const config = Object.create(webpackConfig);
+      config.plugins.push(
+        new webpack.DefinePlugin({
+          MOVIE_DATA: JSON.stringify(movieData),
+          'process.env.NODE_ENV': JSON.stringify('production')
+        }),
+        new webpack.optimize.DedupePlugin(),
+        new webpack.optimize.OccurenceOrderPlugin(),
+        new webpack.optimize.UglifyJsPlugin({ compress: { warnings: false } })
+      );
 
-  return webpack(config, (err, stats) => {
-    if (err) {
-      throw new $.util.PluginError('webpack:build', err);
-    }
-    $.util.log('[webpack:build]', stats.toString({ colors: true }));
-  });
-});
-
-gulp.task('webpack', () => {
-  const taskName = production ? 'webpack:build' : 'webpack:dev';
-  return runSequence('fetchData', taskName);
+      return webpack(config, (err, stats) => {
+        if (err) {
+          throw new $.util.PluginError('webpack:build', err);
+        }
+        $.util.log('[webpack:build]', stats.toString({ colors: true }));
+      });
+    });
 });
 
 gulp.task('styles', () => {
@@ -139,13 +156,18 @@ gulp.task('watch', ['styles', 'images', 'jade'], () => {
   gulp.watch('src/**/*.jade', ['jade']);
 });
 
-gulp.task('default', ['webpack', 'watch', 'serve']);
+gulp.task('default', () => {
+  return runSequence(
+    ['webpack:dev', 'watch'],
+    'serve'
+  );
+})
 
 gulp.task('clean', () => del(['dist/**/*', '!dist/.git']));
 
 gulp.task('build', () => {
   return runSequence(
     'clean',
-    ['webpack', 'styles', 'images', 'jade', 'copy']
+    ['webpack:build', 'styles', 'images', 'jade', 'copy']
   );
 });
